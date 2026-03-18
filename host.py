@@ -1,11 +1,11 @@
 from flask import Flask, request, jsonify, send_file
-import subprocess
 import os
-import glob
 
 app = Flask(__name__)
 
-DOWNLOAD_PATH = "/tmp"  # use temp folder on cloud server
+DOWNLOAD_PATH = "/tmp"  # Railway won't allow writing to /sdcard
+
+progress = {"percent": 0, "status": "idle"}
 
 @app.route('/')
 def home():
@@ -13,6 +13,7 @@ def home():
 
 @app.route('/download', methods=['POST'])
 def download():
+    global progress
     data = request.json
     url = data.get("url")
     quality = data.get("quality")
@@ -20,44 +21,21 @@ def download():
     if not url:
         return jsonify({"status": "error", "msg": "No URL provided"})
 
-    # Unique filename
-    filename = f"{DOWNLOAD_PATH}/file_%(id)s.%(ext)s"
+    progress = {"percent": 0, "status": "downloading"}
 
-    # MUSIC
     if quality == "mp3":
-        cmd = [
-            "yt-dlp",
-            "-x",
-            "--audio-format", "mp3",
-            "-o", filename,
-            url
-        ]
+        cmd = f'yt-dlp -x --audio-format mp3 -o "{DOWNLOAD_PATH}/%(title)s.%(ext)s" "{url}"'
     else:
-        if quality == "720":
-            fmt = "bestvideo[height<=720]+bestaudio/best"
-        elif quality == "360":
-            fmt = "bestvideo[height<=360]+bestaudio/best"
-        else:
-            fmt = "best"
+        fmt = "bestvideo[height<=720]+bestaudio/best" if quality=="720" else "bestvideo[height<=360]+bestaudio/best" if quality=="360" else "best"
+        cmd = f'yt-dlp -f "{fmt}" -o "{DOWNLOAD_PATH}/%(title)s.%(ext)s" "{url}"'
 
-        cmd = [
-            "yt-dlp",
-            "-f", fmt,
-            "-o", filename,
-            url
-        ]
+    os.system(cmd)
+    progress["status"] = "done"
+    return jsonify({"status": "done"})
 
-    try:
-        subprocess.run(cmd, check=True)
-
-        # Find downloaded file
-        files = glob.glob(f"{DOWNLOAD_PATH}/file_*")
-        latest = max(files, key=os.path.getctime)
-
-        return send_file(latest, as_attachment=True)
-
-    except Exception as e:
-        return jsonify({"status": "error", "msg": str(e)})
+@app.route('/progress', methods=['GET'])
+def get_progress():
+    return jsonify(progress)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
